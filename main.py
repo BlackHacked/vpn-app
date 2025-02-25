@@ -13,9 +13,17 @@ import ctypes
 import sys
 import signal
 from queue import Empty
-app_dir = os.path.dirname(__file__)
-os.chdir(app_dir)
-os.environ['APP_DIR'] = app_dir
+from pathlib import Path
+
+def resolve_path(path):
+    if getattr(sys, "frozen", False):
+        resolved_path = Path(sys.executable).parent.joinpath(path)
+    else:
+        resolved_path = Path(__file__).parent.joinpath(path)
+    return resolved_path
+
+
+app_dir = resolve_path(".")
 def is_admin():
     try:
         if os.name == 'nt':
@@ -135,7 +143,7 @@ def main(page: ft.Page):
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     
     # Paths setup
-    assets_dir = os.getenv("FLET_ASSETS_DIR", os.path.join(app_dir, "assets"))
+    assets_dir = os.path.join(app_dir, "assets")
     app_config_file_path = os.path.join(app_dir, "data.yaml")
     
     os.makedirs(assets_dir, exist_ok=True)
@@ -320,4 +328,5 @@ def main(page: ft.Page):
         page.update()
 
 if __name__ == '__main__':
+    print(f"app_dir:{app_dir}")
     ft.app(target=main, assets_dir=f"{app_dir}/assets")
