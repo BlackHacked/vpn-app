@@ -5,7 +5,7 @@ import yaml
 import pathlib
 import platform
 import subprocess
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, freeze_support
 import os
 import time
 import threading
@@ -328,5 +328,6 @@ def main(page: ft.Page):
         page.update()
 
 if __name__ == '__main__':
+    freeze_support()
     print(f"app_dir:{app_dir}")
     ft.app(target=main, assets_dir=f"{app_dir}/assets")
