@@ -9,6 +9,7 @@ stack: python 3.10
 environment:
   GITHUB_TOKEN:
     secure: NM8eeoOnjbxL/QytBk14nyS85rRGakEPOpScJopf2Uz3CsfiME7UDAOL2BXiSFyB
+  APPVEYOR_REPO_TAG: true
 
 install:
 - pip install -r requirements.txt
