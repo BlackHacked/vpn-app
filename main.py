@@ -14,6 +14,7 @@ import sys
 import signal
 from queue import Empty
 from pathlib import Path
+import psutil
 
 def resolve_path(path):
     if getattr(sys, "frozen", False):
@@ -22,8 +23,8 @@ def resolve_path(path):
         resolved_path = Path(__file__).parent.joinpath(path)
     return resolved_path
 
-
 app_dir = resolve_path(".")
+
 def is_admin():
     try:
         if os.name == 'nt':
@@ -56,33 +57,28 @@ def run_subprocess(command: str, config_file_path: str, output_queue: Queue, sub
             cwd=config_file_path
         )
         
-        # 立即记录 PID
         subprocess_pids.append(process.pid)
         print(f"Subprocess started with PID: {process.pid}")
         
         def enqueue_output(pipe, queue):
-            """将子进程输出放入队列"""
             for line in iter(pipe.readline, ''):
                 queue.put(f"[{time.ctime()}] {line.strip()}")
             pipe.close()
 
-        # 为 stdout 和 stderr 创建非阻塞读取线程
         stdout_thread = threading.Thread(target=enqueue_output, args=(process.stdout, output_queue), daemon=True)
         stderr_thread = threading.Thread(target=enqueue_output, args=(process.stderr, output_queue), daemon=True)
         stdout_thread.start()
         stderr_thread.start()
 
         if blocking:
-            # 对于阻塞任务（如注册），等待进程完成
             process.wait()
             stdout_thread.join()
             stderr_thread.join()
             output_queue.put(f"进程退出代码: {process.returncode}")
         else:
-            # 对于非阻塞任务（如连接），不等待进程结束
             output_queue.put(f"[{time.ctime()}] Subprocess {process.pid} started (non-blocking)")
 
-        return process  # 返回进程对象以便后续管理
+        return process
 
     except Exception as ex:
         output_queue.put(f"子进程错误: {ex}")
@@ -95,7 +91,6 @@ def run_subprocess(command: str, config_file_path: str, output_queue: Queue, sub
                 process.kill()
 
 def run_register_vpn_cmd(vpn_url: str, vpn_key: str, config_file_path: str, output_queue: Queue, subprocess_pids: list):
-    """Run VPN registration command (blocking)"""
     if platform.system() == "Windows":
         command = f'"{os.path.join(config_file_path, "pgcli_win.exe")}" admin secret --secret-key "{vpn_key}" --network "{vpn_url}" --duration 876500h > "{os.path.join(config_file_path, "psns.json")}"'
     else:
@@ -104,7 +99,6 @@ def run_register_vpn_cmd(vpn_url: str, vpn_key: str, config_file_path: str, outp
     run_subprocess(command, config_file_path, output_queue, subprocess_pids, blocking=True)
 
 def run_connect_vpn_cmd(vpn_url: str, ip_address: str, config_file_path: str, output_queue: Queue, subprocess_pids: list):
-    """Run VPN connection command (non-blocking)"""
     print(f"Running start connect")
     if is_admin():
         print("程序以管理员权限运行")
@@ -122,7 +116,6 @@ def run_connect_vpn_cmd(vpn_url: str, ip_address: str, config_file_path: str, ou
     return run_subprocess(command, config_file_path, output_queue, subprocess_pids, blocking=False)
 
 def save_app_config(app_config_file_path: str, vpn_key: str, vpn_url: str, ip_address: str):
-    """Save configuration to YAML file"""
     try:
         with open(app_config_file_path, 'w') as f:
             data = {"vpn_key": vpn_key, "vpn_url": vpn_url, "ip_address": ip_address}
@@ -131,23 +124,37 @@ def save_app_config(app_config_file_path: str, vpn_key: str, vpn_url: str, ip_ad
         print(f"Failed to save config: {ex}")
 
 def load_app_config(app_config_file_path: str) -> dict:
-    """Load configuration from YAML file"""
     try:
         with open(app_config_file_path, 'r') as f:
             return yaml.safe_load(f) or {}
     except Exception:
         return {}
 
+def kill_process_tree(pid):
+    """使用 psutil 杀死进程及其子进程树"""
+    try:
+        parent = psutil.Process(pid)
+        for child in parent.children(recursive=True):
+            child.kill()
+        parent.kill()
+        time.sleep(0.5)  # 等待进程完全退出
+        if psutil.pid_exists(pid):
+            subprocess.run(f"taskkill /PID {pid} /F /T", shell=True)
+        print(f"Terminated process tree for PID: {pid}")
+    except psutil.NoSuchProcess:
+        print(f"Process {pid} not found")
+    except Exception as ex:
+        print(f"Failed to kill process tree {pid}: {ex}")
+
 def main(page: ft.Page):
     page.title = "MEASURE VPN"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     
-    # Paths setup
     assets_dir = os.path.join(app_dir, "assets")
     app_config_file_path = os.path.join(app_dir, "data.yaml")
     
     os.makedirs(assets_dir, exist_ok=True)
-    # UI Elements
+    
     vpn_key = ft.TextField(label="VPN密钥")
     
     def check_vpn_url(e):
@@ -175,12 +182,11 @@ def main(page: ft.Page):
     )
     
     output_queue = Queue()
-    processes = []  # 用于存储 Process 对象
-    subprocess_pids = []  # 用于存储 subprocess.Popen 的 PID
-    subprocess_objects = []  # 用于存储非阻塞的 subprocess.Popen 对象
+    processes = []
+    subprocess_pids = []
+    subprocess_objects = []
 
     def update_console():
-        """Update console output from queue"""
         try:
             while True:
                 line = output_queue.get_nowait()
@@ -207,7 +213,6 @@ def main(page: ft.Page):
             dis_conn_btn.visible = True
             page.update()
 
-            # Start registration process (blocking)
             reg_process = Process(target=run_register_vpn_cmd, 
                                 args=(vpn_url.value, vpn_key.value, assets_dir, output_queue, subprocess_pids))
             reg_process.daemon = True
@@ -220,11 +225,9 @@ def main(page: ft.Page):
                 page.update()
                 return
 
-            # 等待注册进程完成
             reg_process.join()
             time.sleep(1)
 
-            # Start connection process (non-blocking)
             conn_process = Process(target=run_connect_vpn_cmd, 
                                  args=(vpn_url.value, ip_address.value, assets_dir, output_queue, subprocess_pids))
             conn_process.daemon = True
@@ -232,7 +235,6 @@ def main(page: ft.Page):
                 conn_process.start()
                 processes.append(conn_process)
                 print(f"Connection process started with PID: {conn_process.pid}")
-                # 获取 subprocess.Popen 对象
                 conn_subprocess = run_connect_vpn_cmd(vpn_url.value, ip_address.value, assets_dir, output_queue, subprocess_pids)
                 if conn_subprocess:
                     subprocess_objects.append(conn_subprocess)
@@ -266,44 +268,21 @@ def main(page: ft.Page):
         # 终止 multiprocessing Process
         for p in processes[:]:
             if p.is_alive():
-                try:
-                    p.kill()
-                    print(f"Terminated multiprocessing process {p.pid}")
-                    p.join(timeout=1.0)
-                except Exception as ex:
-                    print(f"Failed to kill multiprocessing process {p.pid}: {ex}")
-                    if platform.system() == "Windows":
-                        subprocess.run(f"taskkill /PID {p.pid} /F", shell=True)
-                    else:
-                        os.kill(p.pid, signal.SIGKILL)
+                kill_process_tree(p.pid)
+                p.join(timeout=1.0)
                 if p in processes:
                     processes.remove(p)
-        
+
         # 终止 subprocess.Popen 创建的子进程
         for proc in subprocess_objects[:]:
             if proc.poll() is None:
-                try:
-                    proc.kill()
-                    print(f"Terminated subprocess {proc.pid}")
-                    proc.wait(timeout=1.0)
-                except Exception as ex:
-                    print(f"Failed to kill subprocess {proc.pid}: {ex}")
-                    if platform.system() == "Windows":
-                        subprocess.run(f"taskkill /PID {proc.pid} /F", shell=True)
-                    else:
-                        os.kill(proc.pid, signal.SIGKILL)
+                kill_process_tree(proc.pid)
+                proc.wait(timeout=1.0)
                 subprocess_objects.remove(proc)
 
+        # 清理记录的 PID
         for pid in subprocess_pids[:]:
-            try:
-                if platform.system() == "Windows":
-                    subprocess.run(f"taskkill /PID {pid} /F", shell=True)
-                    print(f"Terminated subprocess {pid}")
-                else:
-                    os.kill(pid, signal.SIGKILL)
-                    print(f"Terminated subprocess {pid}")
-            except Exception as ex:
-                print(f"Failed to kill subprocess {pid}: {ex}")
+            kill_process_tree(pid)
             subprocess_pids.remove(pid)
 
         processes.clear()
@@ -319,7 +298,6 @@ def main(page: ft.Page):
     
     page.add(vpn_key, vpn_url, ip_address, conn_btn, dis_conn_btn, cmd_text)
     
-    # Load existing config
     if os.path.exists(app_config_file_path):
         data = load_app_config(app_config_file_path)
         vpn_key.value = data.get("vpn_key", "")
@@ -327,7 +305,13 @@ def main(page: ft.Page):
         ip_address.value = data.get("ip_address", "")
         page.update()
 
+def run_as_admin():
+    if not is_admin():
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, " ".join(sys.argv), None, 1)
+        sys.exit(0)
+
 if __name__ == '__main__':
+    run_as_admin()  # 确保以管理员权限运行
     freeze_support()
     print(f"app_dir:{app_dir}")
     ft.app(target=main, assets_dir=f"{app_dir}/assets")
