@@ -1,0 +1,70 @@
+image:
+- Visual Studio 2019
+- macOS
+- Ubuntu
+
+skip_branch_with_pr: true
+stack: python 3.10
+
+environment:
+  GITHUB_TOKEN:
+    secure: NM8eeoOnjbxL/QytBk14nyS85rRGakEPOpScJopf2Uz3CsfiME7UDAOL2BXiSFyB
+
+install:
+- pip install -r requirements.txt
+
+build_script:
+- flet pack main.py --name vpn --icon icon.png --product-name vpn --product-version "1.0.0" --copyright "Copyright (c) 2025 Latin"
+
+test: off
+
+# Publish artifacts to GitHub Releases on "tag" builds
+deploy:
+  provider: GitHub
+  auth_token: $(GITHUB_TOKEN)
+  on:
+    APPVEYOR_REPO_TAG: true
+
+#
+#   Windows package
+# 
+for:
+-
+  matrix:
+    only:
+    - image: Visual Studio 2019
+
+  after_build:
+  - 7z a vpn-windows.zip %CD%\dist\*.exe
+
+  artifacts:
+  - path: vpn-windows.zip
+
+#
+#   macOS package
+# 
+-
+  matrix:
+    only:
+    - image: macOS
+
+  after_build:
+  - tar -czvf vpn-macos.tar.gz -C dist vpn.app
+
+  artifacts:
+  - path: vpn-macos.tar.gz
+
+#
+#   Linux package
+# 
+-
+  matrix:
+    only:
+    - image: Ubuntu
+
+  after_build:
+  - tar -czvf vpn-linux.tar.gz -C dist vpn
+
+  artifacts:
+  - path: vpn-linux.tar.gz
+
