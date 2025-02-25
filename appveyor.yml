@@ -10,6 +10,7 @@ environment:
   GITHUB_TOKEN:
     secure: NM8eeoOnjbxL/QytBk14nyS85rRGakEPOpScJopf2Uz3CsfiME7UDAOL2BXiSFyB
   APPVEYOR_REPO_TAG: true
+  
 
 install:
 - pip install -r requirements.txt
@@ -23,9 +24,10 @@ test: off
 deploy:
   provider: GitHub
   auth_token: $(GITHUB_TOKEN)
-  on:
-    appveyor_repo_tag: true
-#
+  appveyor_repo_tag: true
+  tag: $(APPVEYOR_REPO_TAG_NAME)
+  force_update: true
+
 #   Windows package
 # 
 for:
@@ -39,6 +41,8 @@ for:
 
   artifacts:
   - path: vpn-windows.zip
+
+  
 
 #
 #   macOS package
